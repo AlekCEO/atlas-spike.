@@ -71,7 +71,7 @@ function row(k, v, good){
 async function handle(files, inputName){
   var src = document.getElementById('src').value;
   for (var i = 0; i < files.length; i++){
-    var f = files[i], r = {file: f.name, type: f.type || '(пусто)', sizeKB: Math.round(f.size/1024), input: inputName, source: src, mode: E.mode};
+    var f = files[i], r = {file: f.name, type: f.type || '(пусто)', sizeKB: Math.round(f.size/1024), input: ({f1: 'выбор фото', f2: 'камера (capture)', f3: 'любой файл'})[inputName], source: src, mode: E.mode};
     var html = '<div class="card"><div class="name">' + f.name + '</div>';
     try{
       var all = await exifr.parse(f, {gps: true, tiff: true, exif: true, ifd0: true, ifd1: false, xmp: false, translateValues: false, reviveValues: true});
@@ -86,10 +86,30 @@ async function handle(files, inputName){
       r.camera = [all.Make, all.Model].filter(Boolean).join(' ') || null;
     }catch(e){
       r.error = String(e && e.message || e);
+      try{
+        var buf = await f.arrayBuffer(), u = new Uint8Array(buf);
+        var asc = function(a, b){ var s = ''; for (var k = a; k < b && k < u.length; k++) s += (u[k] >= 32 && u[k] < 127) ? String.fromCharCode(u[k]) : '.'; return s; };
+        r.head = asc(0, 32);
+        r.brand = asc(8, 12);
+        r.hasExifTag = asc(0, 300000).indexOf('Exif') >= 0;
+        try{
+          var p2 = await exifr.parse(buf);
+          r.retryDefault = p2 ? Object.keys(p2).length + ' тегов' : 'null';
+          var g2 = await exifr.gps(buf);
+          r.retryGps = g2 && g2.latitude != null ? g2.latitude + ', ' + g2.longitude : null;
+        }catch(e2){ r.retryDefault = 'ошибка: ' + (e2 && e2.message || e2); }
+      }catch(e3){ r.diagError = String(e3); }
     }
     html += row('Формат / размер', r.type + ' · ' + r.sizeKB + ' КБ');
     if (r.error){
       html += row('Ошибка чтения', r.error, false);
+      if (r.head !== undefined){
+        html += row('Начало файла', r.head);
+        html += row('Метка формата', r.brand);
+        html += row('В файле есть блок Exif', r.hasExifTag ? 'да' : 'нет', r.hasExifTag);
+        html += row('Повтор чтения', r.retryDefault || '-');
+        html += row('Повтор: GPS', r.retryGps || 'нет', !!r.retryGps);
+      }
     } else {
       html += row('EXIF вообще', r.hasExif ? 'есть' : 'нет', r.hasExif);
       html += row('Координаты', r.lat != null ? fmt(r.lat,6) + ', ' + fmt(r.lng,6) : 'НЕТ', r.lat != null);
