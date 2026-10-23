@@ -98,10 +98,30 @@ async function handle(files, inputName){
           var g2 = await exifr.gps(buf);
           r.retryGps = g2 && g2.latitude != null ? g2.latitude + ', ' + g2.longitude : null;
         }catch(e2){ r.retryDefault = 'ошибка: ' + (e2 && e2.message || e2); }
+        // обходной путь: найти в HEIC заголовок TIFF после "Exif\0\0" и отдать exifr только его
+        var idx = -1;
+        for (var k = 0; k < Math.min(u.length - 8, 3000000); k++){
+          if (u[k] === 0x45 && u[k+1] === 0x78 && u[k+2] === 0x69 && u[k+3] === 0x66 && u[k+4] === 0 && u[k+5] === 0 &&
+              ((u[k+6] === 0x4D && u[k+7] === 0x4D) || (u[k+6] === 0x49 && u[k+7] === 0x49))){ idx = k + 6; break; }
+        }
+        r.tiffAt = idx;
+        if (idx >= 0){
+          var tiff = buf.slice(idx);
+          var p3 = await exifr.parse(tiff, {gps: true, tiff: true, exif: true, ifd0: true, translateValues: false, reviveValues: true}) || {};
+          var g3 = await exifr.gps(tiff).catch(function(){ return null; });
+          r.recovered = true;
+          r.hasExif = true;
+          r.lat = g3 && g3.latitude != null ? g3.latitude : null;
+          r.lng = g3 && g3.longitude != null ? g3.longitude : null;
+          r.direction = p3.GPSImgDirection != null ? p3.GPSImgDirection : null;
+          r.time = p3.DateTimeOriginal ? new Date(p3.DateTimeOriginal).toISOString() : null;
+          r.orientation = p3.Orientation != null ? p3.Orientation : null;
+          r.camera = [p3.Make, p3.Model].filter(Boolean).join(' ') || null;
+        }
       }catch(e3){ r.diagError = String(e3); }
     }
     html += row('Формат / размер', r.type + ' · ' + r.sizeKB + ' КБ');
-    if (r.error){
+    if (r.error && !r.recovered){
       html += row('Ошибка чтения', r.error, false);
       if (r.head !== undefined){
         html += row('Начало файла', r.head);
@@ -111,6 +131,7 @@ async function handle(files, inputName){
         html += row('Повтор: GPS', r.retryGps || 'нет', !!r.retryGps);
       }
     } else {
+      if (r.recovered) html += row('Чтение', 'обходным способом (HEIC)', true);
       html += row('EXIF вообще', r.hasExif ? 'есть' : 'нет', r.hasExif);
       html += row('Координаты', r.lat != null ? fmt(r.lat,6) + ', ' + fmt(r.lng,6) : 'НЕТ', r.lat != null);
       html += row('Направление камеры', r.direction != null ? fmt(r.direction,1) + '°' : 'нет', r.direction != null);
